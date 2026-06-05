@@ -1,9 +1,9 @@
 # config.py — Price Action Bot Settings
 
 # ── MT5 Account ──────────────────────────────────────
-MT5_LOGIN    = 436146117
-MT5_PASSWORD = "@Bot12345"
-MT5_SERVER   = "Exness-MT5Trial9"
+MT5_LOGIN    = 
+MT5_PASSWORD = ""
+MT5_SERVER   = ""
 
 # ── Market ───────────────────────────────────────────
 SYMBOL       = "XAUUSDm"
