@@ -34,5 +34,5 @@ PAPER_TRADING     = False
 MAGIC_NUMBER      = 123456
 
 # ── Telegram Alerts ──────────────────────────────────
-TELEGRAM_TOKEN   = "8705959885:AAFt_ux9YJ3jCXyuQG65zLBbYDDOu5x9Q5k"    # ← paste your token
-TELEGRAM_CHAT_ID = "5886438301"      # ← paste your chat ID
+TELEGRAM_TOKEN   = ""    # ← paste your token
+TELEGRAM_CHAT_ID = ""      # ← paste your chat ID
