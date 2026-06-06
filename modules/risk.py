@@ -4,7 +4,7 @@
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import REWARD_RATIO, MAX_DAILY_LOSS, DOLLAR_RISK, MAX_LOT
+from config import REWARD_RATIO, MAX_DAILY_LOSS, DOLLAR_RISK, MAX_LOT, MIN_SL_DISTANCE
 
 
 def calculate_lot_size(sl_distance):
@@ -67,7 +67,7 @@ def calculate_trade_levels(df, signal_info, balance=None):
         sl_distance = atr * 1.5
 
     # Minimum SL distance to avoid micro stops
-    sl_distance = max(sl_distance, 3.0)   # Minimum 3 pts for Gold
+    sl_distance = max(sl_distance, MIN_SL_DISTANCE)
     tp_distance = sl_distance * REWARD_RATIO
 
     # ── Entry, SL, TP ─────────────────────────────────

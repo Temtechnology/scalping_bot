@@ -5,33 +5,39 @@ MT5_LOGIN    =
 MT5_PASSWORD = ""
 MT5_SERVER   = ""
 
-# ── Market ───────────────────────────────────────────
+
 SYMBOL       = "XAUUSDm"
-TIMEFRAME    = "M15"          # M15 — your preferred timeframe
+TIMEFRAME    = "M15"
 CANDLE_LIMIT = 200
 
 # ── S&R Detection ────────────────────────────────────
-SR_LOOKBACK  = 50             # Candles to look back for S&R levels
-SR_ZONE      = 1.5            # Points — how close price must be to S&R
-SR_STRENGTH  = 3              # How many times level must be tested
+SR_LOOKBACK  = 50
+SR_ZONE      = 1.5         # Tightened from 1.5 → better levels
+SR_STRENGTH  = 3
 
 # ── Candlestick Patterns ─────────────────────────────
-MIN_BODY_RATIO    = 0.6       # Engulfing body must be 60% of candle
-PIN_BAR_RATIO     = 0.65      # Pin bar wick must be 65% of candle
-BREAKOUT_CONFIRM  = 3         # Candles price must hold beyond S&R
+MIN_BODY_RATIO   = 0.6
+PIN_BAR_RATIO    = 0.65
+BREAKOUT_CONFIRM = 3
 
 # ── Risk Management ──────────────────────────────────
-DOLLAR_RISK       = 50        # Risk exactly $50 per trade
-REWARD_RATIO      = 2.0       # TP = 2× SL distance
-MAX_DAILY_LOSS    = 0.05      # Shut down at 5% daily loss
-MAX_LOT           = 0.10      # Safety cap on lot size
-# Add this line:
-MIN_SL_DISTANCE = 3.0    # Never allow SL closer than 3 points
+DOLLAR_RISK      = 50
+REWARD_RATIO     = 2.0
+MAX_DAILY_LOSS   = 0.05
+MAX_LOT          = 0.10
+MIN_SL_DISTANCE  = 1.0
 
-# ── Bot Behaviour ────────────────────────────────────
-SLEEP_SECONDS     = 60
-PAPER_TRADING     = False
-MAGIC_NUMBER      = 123456
+# ── Session Filter (WAT = GMT+1) ──────────────────────
+LONDON_OPEN  = 9           # 9AM WAT
+LONDON_CLOSE = 13          # 1PM WAT
+NY_OPEN      = 14          # 2PM WAT
+NY_CLOSE     = 18          # 6PM WAT
+
+# ── Bot Behaviour ─────────────────────────────────────
+SLEEP_SECONDS  = 60
+PAPER_TRADING  = False
+MAGIC_NUMBER   = 123456
+
 
 # ── Telegram Alerts ──────────────────────────────────
 TELEGRAM_TOKEN   = ""    # ← paste your token

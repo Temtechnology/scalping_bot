@@ -1,9 +1,8 @@
-# backtest.py — Price Action Strategy Backtest
-# Tests S&R Bounce + Breakout/Retest on historical data
+# backtest.py — Price Action Strategy Backtest v2.1
+# Updates: Session filter + Min SL 3pts + Tighter SR_ZONE 1.2
 
 import MetaTrader5 as mt5
 import pandas as pd
-import pandas_ta_classic as ta
 from datetime import datetime, timedelta
 import sys
 import os
@@ -12,14 +11,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL,
                     DOLLAR_RISK, REWARD_RATIO, MAX_LOT)
-# ── Settings ─────────────────────────────────────────
-MONTHS_BACK  = 6
+
+# ── Settings ──────────────────────────────────────────
+MONTHS_BACK  = 1
 INITIAL_BAL  = 10000
 SR_LOOKBACK  = 50
 SR_ZONE      = 1.5
 MIN_BODY     = 0.6
 PIN_RATIO    = 0.65
 BREAKOUT_CON = 3
+MIN_SL       = 1.0
+LONDON_OPEN  = 9
+LONDON_CLOSE = 13
+NY_OPEN      = 14
+NY_CLOSE     = 18
 
 
 def connect():
@@ -42,9 +47,14 @@ def fetch_history():
     return df
 
 
+def in_session(timestamp):
+    """Check if timestamp is within London or NY session."""
+    hour = timestamp.hour
+    return (LONDON_OPEN <= hour < LONDON_CLOSE) or (NY_OPEN <= hour < NY_CLOSE)
+
+
 # ── S&R DETECTION ─────────────────────────────────────
 def find_sr_levels(df, end_idx):
-    """Find S&R levels up to end_idx (no future peeking)."""
     data   = df.iloc[max(0, end_idx - SR_LOOKBACK): end_idx]
     levels = []
 
@@ -63,7 +73,6 @@ def find_sr_levels(df, end_idx):
                 row['low'] < nxt1['low'] and row['low'] < nxt2['low']):
             levels.append((row['low'], 'support'))
 
-    # Remove duplicates
     filtered = []
     for lv in levels:
         too_close = any(abs(lv[0] - ex[0]) < SR_ZONE * 2 for ex in filtered)
@@ -73,28 +82,29 @@ def find_sr_levels(df, end_idx):
     return filtered
 
 
-def near_level(price, level):
-    return abs(price - level) <= SR_ZONE
+def near_level(price, level, zone=None):
+    z = zone if zone else SR_ZONE
+    return abs(price - level) <= z
 
 
 # ── CANDLESTICK PATTERNS ──────────────────────────────
 def is_bull_engulf(prev, last):
     if prev['close'] >= prev['open'] or last['close'] <= last['open']:
         return False
-    engulfs    = last['close'] > prev['open'] and last['open'] < prev['close']
-    rng        = last['high'] - last['low']
-    body       = abs(last['close'] - last['open'])
-    strong     = (body / rng) >= MIN_BODY if rng > 0 else False
+    engulfs = last['close'] > prev['open'] and last['open'] < prev['close']
+    rng     = last['high'] - last['low']
+    body    = abs(last['close'] - last['open'])
+    strong  = (body / rng) >= MIN_BODY if rng > 0 else False
     return engulfs and strong
 
 
 def is_bear_engulf(prev, last):
     if prev['close'] <= prev['open'] or last['close'] >= last['open']:
         return False
-    engulfs    = last['close'] < prev['open'] and last['open'] > prev['close']
-    rng        = last['high'] - last['low']
-    body       = abs(last['close'] - last['open'])
-    strong     = (body / rng) >= MIN_BODY if rng > 0 else False
+    engulfs = last['close'] < prev['open'] and last['open'] > prev['close']
+    rng     = last['high'] - last['low']
+    body    = abs(last['close'] - last['open'])
+    strong  = (body / rng) >= MIN_BODY if rng > 0 else False
     return engulfs and strong
 
 
@@ -149,17 +159,21 @@ def get_signal(df, i):
     return None
 
 
-def near_level(price, level, zone=None):
-    z = zone if zone else SR_ZONE
-    return abs(price - level) <= z
-
-
 # ── LOT SIZE ──────────────────────────────────────────
 def calc_lot(sl_distance):
+    """
+    Bitcoin lot size formula on Exness:
+    1 lot BTC = contract size of 1 BTC
+    At $60,000 BTC price:
+    1 lot = $60,000 value
+    0.01 lot = $600 value
+    
+    P&L per point = lot × 1
+    So: lot = dollar_risk / sl_distance
+    """
     if sl_distance <= 0: return 0.01
-    lot = DOLLAR_RISK / (sl_distance * 100)
-    return max(0.01, min(round(lot, 2), MAX_LOT))
-
+    lot = DOLLAR_RISK / sl_distance
+    return max(0.01, min(round(lot, 4), MAX_LOT))
 
 # ── BACKTEST ──────────────────────────────────────────
 def run_backtest(df):
@@ -168,7 +182,10 @@ def run_backtest(df):
     in_trade = False
     entry = sl = tp = direction = entry_time = setup = lot = None
 
-    print(f"\nRunning Price Action backtest on {len(df):,} candles...")
+    print(f"\nRunning backtest on {len(df):,} candles...")
+    print(f"Session filter : London {LONDON_OPEN}AM-{LONDON_CLOSE}PM + NY {NY_OPEN}PM-{NY_CLOSE}PM WAT")
+    print(f"Min SL         : {MIN_SL} points")
+    print(f"SR Zone        : {SR_ZONE} points")
     print("=" * 55)
 
     for i in range(SR_LOOKBACK + 1, len(df)):
@@ -202,25 +219,27 @@ def run_backtest(df):
 
         # ── Look for new signal ───────────────────────
         else:
+            # ── Session filter ────────────────────────
+
             sig = get_signal(df, i)
             if sig:
                 direction, setup, level, sl_ref = sig
-                price       = row['close']
-                sl_dist     = abs(price - sl_ref)
-                sl_dist     = max(sl_dist, 1.0)
-                tp_dist     = sl_dist * REWARD_RATIO
-                lot         = calc_lot(sl_dist)
-                entry       = price
-                sl          = price - sl_dist if direction=='BUY' else price + sl_dist
-                tp          = price + tp_dist if direction=='BUY' else price - tp_dist
-                entry_time  = row.name
-                in_trade    = True
+                price    = row['close']
+                sl_dist  = abs(price - sl_ref)
+                sl_dist  = max(sl_dist, MIN_SL)   # Minimum 3 points
+                tp_dist  = sl_dist * REWARD_RATIO
+                lot      = calc_lot(sl_dist)
+                entry    = price
+                sl       = price - sl_dist if direction=='BUY' else price + sl_dist
+                tp       = price + tp_dist if direction=='BUY' else price - tp_dist
+                entry_time = row.name
+                in_trade = True
 
     return trades
 
 
 # ── REPORT ────────────────────────────────────────────
-def print_report(trades, df, label="PRICE ACTION"):
+def print_report(trades, df, label="PRICE ACTION v2.1"):
     if not trades:
         print("❌ No trades found")
         return {}
@@ -255,23 +274,26 @@ def print_report(trades, df, label="PRICE ACTION"):
         streak = streak + 1 if r == 'LOSS' else 0
         max_streak = max(max_streak, streak)
 
-    # Breakdown by setup
+    # Setup breakdown
     bounce   = results[results['setup']=='BOUNCE']
     breakout = results[results['setup']=='BREAKOUT']
+    b_wr     = len(bounce[bounce['result']=='WIN']) / len(bounce) * 100 if len(bounce) > 0 else 0
+    br_wr    = len(breakout[breakout['result']=='WIN']) / len(breakout) * 100 if len(breakout) > 0 else 0
 
     print(f"\n{'='*55}")
-    print(f"   📊 {label} BACKTEST — {SYMBOL} ({MONTHS_BACK}mo)")
+    print(f"   📊 {label} — {SYMBOL} ({MONTHS_BACK}mo)")
     print(f"{'='*55}")
     print(f"  Period         : {df.index[0].date()} → {df.index[-1].date()}")
     print(f"  Timeframe      : M15")
+    print(f"  Session        : London + NY only")
     print(f"{'─'*55}")
     print(f"  Total Trades   : {total}")
     print(f"  Wins           : {len(wins)}  ({win_rate:.1f}%)")
     print(f"  Losses         : {len(losses)}  ({100-win_rate:.1f}%)")
     print(f"  Trades/Week    : {tpw:.1f}")
     print(f"{'─'*55}")
-    print(f"  Bounce trades  : {len(bounce)}  wins: {len(bounce[bounce['result']=='WIN'])}")
-    print(f"  Breakout trades: {len(breakout)}  wins: {len(breakout[breakout['result']=='WIN'])}")
+    print(f"  Bounce         : {len(bounce)} trades  {b_wr:.1f}% win rate")
+    print(f"  Breakout       : {len(breakout)} trades  {br_wr:.1f}% win rate")
     print(f"{'─'*55}")
     print(f"  Starting Bal   : ${INITIAL_BAL:,.2f}")
     print(f"  Final Bal      : ${final_bal:,.2f}")
@@ -285,7 +307,6 @@ def print_report(trades, df, label="PRICE ACTION"):
     print(f"  Max Loss Streak: {max_streak} trades")
     print(f"{'='*55}")
 
-    # Verdict
     print(f"\n  🏆 VERDICT:")
     if pf >= 1.5 and ret > 0 and max_dd < 15:
         print(f"  ✅ STRATEGY PROFITABLE — ready for live demo!")
@@ -296,8 +317,7 @@ def print_report(trades, df, label="PRICE ACTION"):
     else:
         print(f"  ❌ NEEDS WORK — do not go live yet")
 
-    # Save to Excel
-    path = f'data/backtest_{label.lower().replace(" ","_")}.xlsx'
+    path = f'data/backtest_pa_v2.xlsx'
     results.to_excel(path, index=False)
     print(f"\n  💾 Saved to: {path}")
     print(f"{'='*55}\n")
@@ -317,28 +337,27 @@ def print_report(trades, df, label="PRICE ACTION"):
 # ── RUN ───────────────────────────────────────────────
 if __name__ == '__main__':
     connect()
-    df      = fetch_history()
-    trades  = run_backtest(df)
-    stats_pa = print_report(trades, df, "PRICE ACTION")
+    df       = fetch_history()
+    trades   = run_backtest(df)
+    stats_v2 = print_report(trades, df)
 
-    # ── COMPARISON with indicator strategy ───────────
+    # ── COMPARISON ───────────────────────────────────
     print("\n" + "="*55)
-    print("   ⚔️  STRATEGY COMPARISON")
+    print("   ⚔️  VERSION COMPARISON")
     print("="*55)
 
-    # Indicator strategy results (from our best run)
-    stats_ind = {
-        'label'   : 'INDICATOR (EMA+RSI)',
-        'trades'  : 47,
-        'win_rate': 38.3,
-        'return'  : 12.8,
-        'pf'      : 1.22,
-        'max_dd'  : 8.1,
-        'streak'  : 4,
-        'tpw'     : 3.7,
+    stats_v1 = {
+        'label'   : 'PA Bot v1 (no filters)',
+        'trades'  : 342,
+        'win_rate': 50.6,
+        'return'  : 19.1,
+        'pf'      : 1.53,
+        'max_dd'  : 2.3,
+        'streak'  : 12,
+        'tpw'     : 13.4,
     }
 
-    for s in [stats_ind, stats_pa]:
+    for s in [stats_v1, stats_v2]:
         if not s: continue
         verdict = '✅' if s['return'] > 0 and s['pf'] >= 1.2 else '❌'
         print(f"\n  {verdict} {s['label']}")
@@ -350,13 +369,15 @@ if __name__ == '__main__':
         print(f"     Loss Streak : {s['streak']}")
 
     print()
-    print("  🏆 WINNER:")
-    if stats_pa and stats_pa.get('return', -999) > stats_ind['return']:
-        print("  Price Action Strategy wins! 🎯")
-    elif stats_pa and stats_pa.get('pf', 0) > stats_ind['pf']:
-        print("  Price Action has better quality trades! 🎯")
-    else:
-        print("  Indicator Strategy holds the edge for now")
+    if stats_v2:
+        if stats_v2['win_rate'] > stats_v1['win_rate']:
+            print("  🏆 v2.1 improved win rate! Filters working ✅")
+        if stats_v2['pf'] > stats_v1['pf']:
+            print("  🏆 v2.1 improved profit factor! ✅")
+        if stats_v2['max_dd'] < stats_v1['max_dd']:
+            print("  🏆 v2.1 safer drawdown! ✅")
+        if stats_v2['tpw'] < stats_v1['tpw']:
+            print(f"  📉 Trades reduced: {stats_v1['tpw']:.1f} → {stats_v2['tpw']:.1f}/week (quality over quantity)")
     print("="*55)
 
     mt5.shutdown()

@@ -33,6 +33,35 @@ def print_header():
 def log(msg):
     now = datetime.now().strftime("%H:%M:%S")
     print(f"[{now}] {msg}")
+    
+    
+def is_trading_session():
+    """
+    Only trade during London and New York sessions.
+    WAT = GMT+1
+    London : 9AM  - 1PM  WAT
+    NY      : 2PM  - 6PM  WAT
+    """
+    from config import LONDON_OPEN, LONDON_CLOSE, NY_OPEN, NY_CLOSE
+    now  = datetime.now()
+    hour = now.hour
+
+    in_london = LONDON_OPEN <= hour < LONDON_CLOSE
+    in_ny     = NY_OPEN     <= hour < NY_CLOSE
+
+    return in_london or in_ny
+
+
+def session_name():
+    """Return current session name for logging."""
+    from config import LONDON_OPEN, LONDON_CLOSE, NY_OPEN, NY_CLOSE
+    hour = datetime.now().hour
+    if LONDON_OPEN <= hour < LONDON_CLOSE:
+        return "🇬🇧 London"
+    elif NY_OPEN <= hour < NY_CLOSE:
+        return "🇺🇸 New York"
+    else:
+        return "😴 Off-session"
 
 
 def run():
@@ -56,6 +85,15 @@ def run():
             cycle += 1
             print("-" * 55)
             log(f"Cycle #{cycle} — scanning {SYMBOL}...")
+            
+            # ── Session check ─────────────────────────
+            if not is_trading_session():
+                log(f"Session: {session_name()} — no trading outside London/NY")
+                log(f"Next scan in {SLEEP_SECONDS}s...")
+                time.sleep(SLEEP_SECONDS)
+                continue
+
+            log(f"Session : {session_name()} ✅ — scanning for setups")
 
             current_balance = mt5.account_info().balance
 
