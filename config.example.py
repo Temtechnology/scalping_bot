@@ -3,7 +3,7 @@
 
 MT5_LOGIN    = 00000000
 MT5_PASSWORD = "your_password"
-MT5_SERVER   = "Exness-MT5Trial9"
+MT5_SERVER   = "Broker_Server"
 
 SYMBOL       = "XAUUSDm"
 TIMEFRAME    = "M15"
