@@ -10,7 +10,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL,
-                    DOLLAR_RISK, REWARD_RATIO, MAX_LOT)
+                    RISK_PCT, REWARD_RATIO, MAX_LOT)
 
 # ── Settings ──────────────────────────────────────────
 INITIAL_BAL  = 10000
@@ -146,9 +146,13 @@ def get_signal(df, i):
 
 
 # ── LOT SIZE ──────────────────────────────────────────
-def calc_lot(sl_distance):
+RISK_PCT = 0.02    # Add at top with other settings
+
+def calc_lot(sl_distance, balance):
+    """Dynamic lot size — 2% of current balance."""
+    dollar_risk = balance * RISK_PCT
     if sl_distance <= 0: return 0.01
-    lot = DOLLAR_RISK / (sl_distance * 100)
+    lot = dollar_risk / (sl_distance * 100)
     return max(0.01, min(round(lot, 2), MAX_LOT))
 
 
@@ -194,7 +198,7 @@ def run_backtest(df):
                 sl_dist  = abs(price - sl_ref)
                 sl_dist  = max(sl_dist, MIN_SL)
                 tp_dist  = sl_dist * REWARD_RATIO
-                lot      = calc_lot(sl_dist)
+                lot      = calc_lot(sl_dist, balance)  # Pass current balance!
                 entry    = price
                 sl       = price - sl_dist if direction=='BUY' else price + sl_dist
                 tp       = price + tp_dist if direction=='BUY' else price - tp_dist

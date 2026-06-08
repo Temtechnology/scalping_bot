@@ -21,10 +21,10 @@ PIN_BAR_RATIO    = 0.65
 BREAKOUT_CONFIRM = 3
 
 # ── Risk Management ──────────────────────────────────
-DOLLAR_RISK     = 100.0
-REWARD_RATIO     = 3.0
+RISK_PCT    = 0.02    # 2% risk per trade (auto compounds)
+REWARD_RATIO     = 2.0
 MAX_DAILY_LOSS   = 0.05
-MAX_LOT          = 0.20
+MAX_LOT          = 1.00    # Allow larger lots as account grows
 MIN_SL_DISTANCE = 1.0
 
 # ── Session Filter (WAT = GMT+1) ──────────────────────
