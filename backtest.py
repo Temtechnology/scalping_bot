@@ -1,5 +1,5 @@
-# backtest.py — Price Action Strategy Backtest v2.1
-# Updates: Session filter + Min SL 3pts + Tighter SR_ZONE 1.2
+# backtest.py — Price Action Bot V1 Final
+# Runs 6, 3, and 1 month backtests automatically
 
 import MetaTrader5 as mt5
 import pandas as pd
@@ -13,7 +13,6 @@ from config import (MT5_LOGIN, MT5_PASSWORD, MT5_SERVER, SYMBOL,
                     DOLLAR_RISK, REWARD_RATIO, MAX_LOT)
 
 # ── Settings ──────────────────────────────────────────
-MONTHS_BACK  = 1
 INITIAL_BAL  = 10000
 SR_LOOKBACK  = 50
 SR_ZONE      = 1.5
@@ -21,21 +20,17 @@ MIN_BODY     = 0.6
 PIN_RATIO    = 0.65
 BREAKOUT_CON = 3
 MIN_SL       = 1.0
-LONDON_OPEN  = 9
-LONDON_CLOSE = 13
-NY_OPEN      = 14
-NY_CLOSE     = 18
 
 
 def connect():
     mt5.initialize()
     mt5.login(MT5_LOGIN, MT5_PASSWORD, MT5_SERVER)
-    print(f"✅ Connected — fetching {MONTHS_BACK} months of {SYMBOL}...")
+    print(f"✅ Connected to MT5 — {SYMBOL}")
 
 
-def fetch_history():
+def fetch_history(months):
     end   = datetime.now()
-    start = end - timedelta(days=MONTHS_BACK * 30)
+    start = end - timedelta(days=months * 30)
     rates = mt5.copy_rates_range(SYMBOL, mt5.TIMEFRAME_M15, start, end)
     df    = pd.DataFrame(rates)
     df['time'] = pd.to_datetime(df['time'], unit='s')
@@ -43,14 +38,7 @@ def fetch_history():
     df = df[['open','high','low','close','tick_volume']].copy()
     df.rename(columns={'tick_volume': 'volume'}, inplace=True)
     df.dropna(inplace=True)
-    print(f"✅ Got {len(df):,} candles on M15 ({MONTHS_BACK} months)")
     return df
-
-
-def in_session(timestamp):
-    """Check if timestamp is within London or NY session."""
-    hour = timestamp.hour
-    return (LONDON_OPEN <= hour < LONDON_CLOSE) or (NY_OPEN <= hour < NY_CLOSE)
 
 
 # ── S&R DETECTION ─────────────────────────────────────
@@ -132,7 +120,6 @@ def get_signal(df, i):
     levels = find_sr_levels(df, i)
 
     for lp, lt in levels:
-        # ── BOUNCE ───────────────────────────────────
         if lt == 'support' and near_level(price, lp):
             if is_bull_engulf(prev, last) or is_bull_pin(last):
                 return ('BUY', 'BOUNCE', lp, lp - SR_ZONE)
@@ -141,7 +128,6 @@ def get_signal(df, i):
             if is_bear_engulf(prev, last) or is_bear_pin(last):
                 return ('SELL', 'BOUNCE', lp, lp + SR_ZONE)
 
-        # ── BREAKOUT RETEST ───────────────────────────
         if lt == 'resistance' and i >= BREAKOUT_CON + 1:
             window = df.iloc[i-BREAKOUT_CON-1: i-1]
             if all(c['close'] > lp for _, c in window.iterrows()):
@@ -161,19 +147,10 @@ def get_signal(df, i):
 
 # ── LOT SIZE ──────────────────────────────────────────
 def calc_lot(sl_distance):
-    """
-    Bitcoin lot size formula on Exness:
-    1 lot BTC = contract size of 1 BTC
-    At $60,000 BTC price:
-    1 lot = $60,000 value
-    0.01 lot = $600 value
-    
-    P&L per point = lot × 1
-    So: lot = dollar_risk / sl_distance
-    """
     if sl_distance <= 0: return 0.01
-    lot = DOLLAR_RISK / sl_distance
-    return max(0.01, min(round(lot, 4), MAX_LOT))
+    lot = DOLLAR_RISK / (sl_distance * 100)
+    return max(0.01, min(round(lot, 2), MAX_LOT))
+
 
 # ── BACKTEST ──────────────────────────────────────────
 def run_backtest(df):
@@ -182,16 +159,9 @@ def run_backtest(df):
     in_trade = False
     entry = sl = tp = direction = entry_time = setup = lot = None
 
-    print(f"\nRunning backtest on {len(df):,} candles...")
-    print(f"Session filter : London {LONDON_OPEN}AM-{LONDON_CLOSE}PM + NY {NY_OPEN}PM-{NY_CLOSE}PM WAT")
-    print(f"Min SL         : {MIN_SL} points")
-    print(f"SR Zone        : {SR_ZONE} points")
-    print("=" * 55)
-
     for i in range(SR_LOOKBACK + 1, len(df)):
         row = df.iloc[i]
 
-        # ── Monitor open trade ────────────────────────
         if in_trade:
             hit_tp = (direction=='BUY'  and row['high'] >= tp) or \
                      (direction=='SELL' and row['low']  <= tp)
@@ -216,17 +186,13 @@ def run_backtest(df):
                     'balance'    : round(balance, 2),
                 })
                 in_trade = False
-
-        # ── Look for new signal ───────────────────────
         else:
-            # ── Session filter ────────────────────────
-
             sig = get_signal(df, i)
             if sig:
                 direction, setup, level, sl_ref = sig
                 price    = row['close']
                 sl_dist  = abs(price - sl_ref)
-                sl_dist  = max(sl_dist, MIN_SL)   # Minimum 3 points
+                sl_dist  = max(sl_dist, MIN_SL)
                 tp_dist  = sl_dist * REWARD_RATIO
                 lot      = calc_lot(sl_dist)
                 entry    = price
@@ -239,9 +205,9 @@ def run_backtest(df):
 
 
 # ── REPORT ────────────────────────────────────────────
-def print_report(trades, df, label="PRICE ACTION v2.1"):
+def print_report(trades, df, months):
     if not trades:
-        print("❌ No trades found")
+        print(f"  ❌ No trades found for {months} month period")
         return {}
 
     results   = pd.DataFrame(trades)
@@ -260,6 +226,9 @@ def print_report(trades, df, label="PRICE ACTION v2.1"):
     days      = (df.index[-1] - df.index[0]).days
     tpw       = total / (days/7) if days > 0 else 0
 
+    # Monthly return estimate
+    monthly_ret = ret / months
+
     # Max drawdown
     peak   = INITIAL_BAL
     max_dd = 0
@@ -277,107 +246,133 @@ def print_report(trades, df, label="PRICE ACTION v2.1"):
     # Setup breakdown
     bounce   = results[results['setup']=='BOUNCE']
     breakout = results[results['setup']=='BREAKOUT']
-    b_wr     = len(bounce[bounce['result']=='WIN']) / len(bounce) * 100 if len(bounce) > 0 else 0
-    br_wr    = len(breakout[breakout['result']=='WIN']) / len(breakout) * 100 if len(breakout) > 0 else 0
+    b_wr  = len(bounce[bounce['result']=='WIN'])    / len(bounce)   * 100 if len(bounce)   > 0 else 0
+    br_wr = len(breakout[breakout['result']=='WIN']) / len(breakout) * 100 if len(breakout) > 0 else 0
+
+    # Withdrawal simulation
+    monthly_profit = (INITIAL_BAL * monthly_ret / 100)
 
     print(f"\n{'='*55}")
-    print(f"   📊 {label} — {SYMBOL} ({MONTHS_BACK}mo)")
+    print(f"   📊 {months} MONTH BACKTEST — {SYMBOL}")
     print(f"{'='*55}")
     print(f"  Period         : {df.index[0].date()} → {df.index[-1].date()}")
-    print(f"  Timeframe      : M15")
-    print(f"  Session        : London + NY only")
+    print(f"  Candles        : {len(df):,} on M15")
     print(f"{'─'*55}")
     print(f"  Total Trades   : {total}")
     print(f"  Wins           : {len(wins)}  ({win_rate:.1f}%)")
     print(f"  Losses         : {len(losses)}  ({100-win_rate:.1f}%)")
     print(f"  Trades/Week    : {tpw:.1f}")
     print(f"{'─'*55}")
-    print(f"  Bounce         : {len(bounce)} trades  {b_wr:.1f}% win rate")
-    print(f"  Breakout       : {len(breakout)} trades  {br_wr:.1f}% win rate")
+    print(f"  Bounce         : {len(bounce)} trades  {b_wr:.1f}% WR")
+    print(f"  Breakout       : {len(breakout)} trades  {br_wr:.1f}% WR")
     print(f"{'─'*55}")
     print(f"  Starting Bal   : ${INITIAL_BAL:,.2f}")
     print(f"  Final Bal      : ${final_bal:,.2f}")
     print(f"  Total P&L      : ${total_pnl:+,.2f}")
     print(f"  Total Return   : {ret:+.1f}%")
+    print(f"  Monthly Avg    : {monthly_ret:+.1f}%")
     print(f"{'─'*55}")
     print(f"  Avg Win        : ${avg_win:+.2f}")
     print(f"  Avg Loss       : ${avg_loss:+.2f}")
     print(f"  Profit Factor  : {pf:.2f}")
     print(f"  Max Drawdown   : {max_dd:.1f}%")
     print(f"  Max Loss Streak: {max_streak} trades")
-    print(f"{'='*55}")
+    print(f"{'─'*55}")
+    print(f"  💰 WITHDRAWAL PROJECTION (end of month):")
+    print(f"  On $1,000  → withdraw ~${monthly_profit/10:,.2f}/month")
+    print(f"  On $5,000  → withdraw ~${monthly_profit/2:,.2f}/month")
+    print(f"  On $10,000 → withdraw ~${monthly_profit:,.2f}/month")
+    print(f"{'─'*55}")
 
-    print(f"\n  🏆 VERDICT:")
+    # Verdict
     if pf >= 1.5 and ret > 0 and max_dd < 15:
-        print(f"  ✅ STRATEGY PROFITABLE — ready for live demo!")
+        verdict = "✅ STRATEGY PROFITABLE — ready for live!"
     elif pf >= 1.2 and ret > 0 and max_dd < 15:
-        print(f"  ✅ GOOD EDGE — profitable, keep running on demo")
+        verdict = "✅ GOOD EDGE — keep running on demo"
     elif ret > 0 and pf >= 1.0:
-        print(f"  ⚠️  MARGINAL — profitable but needs work")
+        verdict = "⚠️  MARGINAL — profitable but needs work"
     else:
-        print(f"  ❌ NEEDS WORK — do not go live yet")
+        verdict = "❌ NEEDS WORK — do not go live yet"
 
-    path = f'data/backtest_pa_v2.xlsx'
-    results.to_excel(path, index=False)
-    print(f"\n  💾 Saved to: {path}")
+    print(f"  🏆 VERDICT: {verdict}")
     print(f"{'='*55}\n")
 
+    # Save Excel
+    path = f'data/backtest_{months}mo.xlsx'
+    results.to_excel(path, index=False)
+    print(f"  💾 Saved: {path}\n")
+
     return {
-        'label'   : label,
-        'trades'  : total,
-        'win_rate': win_rate,
-        'return'  : ret,
-        'pf'      : pf,
-        'max_dd'  : max_dd,
-        'streak'  : max_streak,
-        'tpw'     : tpw,
+        'months'      : months,
+        'trades'      : total,
+        'win_rate'    : win_rate,
+        'return'      : ret,
+        'monthly_ret' : monthly_ret,
+        'pf'          : pf,
+        'max_dd'      : max_dd,
+        'streak'      : max_streak,
+        'tpw'         : tpw,
+        'monthly_profit': monthly_profit,
+        'verdict'     : verdict,
     }
 
 
-# ── RUN ───────────────────────────────────────────────
+# ── RUN ALL THREE PERIODS ─────────────────────────────
 if __name__ == '__main__':
     connect()
-    df       = fetch_history()
-    trades   = run_backtest(df)
-    stats_v2 = print_report(trades, df)
-
-    # ── COMPARISON ───────────────────────────────────
-    print("\n" + "="*55)
-    print("   ⚔️  VERSION COMPARISON")
-    print("="*55)
-
-    stats_v1 = {
-        'label'   : 'PA Bot v1 (no filters)',
-        'trades'  : 342,
-        'win_rate': 50.6,
-        'return'  : 19.1,
-        'pf'      : 1.53,
-        'max_dd'  : 2.3,
-        'streak'  : 12,
-        'tpw'     : 13.4,
-    }
-
-    for s in [stats_v1, stats_v2]:
-        if not s: continue
-        verdict = '✅' if s['return'] > 0 and s['pf'] >= 1.2 else '❌'
-        print(f"\n  {verdict} {s['label']}")
-        print(f"     Trades/week : {s['tpw']:.1f}")
-        print(f"     Win Rate    : {s['win_rate']:.1f}%")
-        print(f"     Return      : {s['return']:+.1f}%")
-        print(f"     Profit Fact : {s['pf']:.2f}")
-        print(f"     Max DD      : {s['max_dd']:.1f}%")
-        print(f"     Loss Streak : {s['streak']}")
-
     print()
-    if stats_v2:
-        if stats_v2['win_rate'] > stats_v1['win_rate']:
-            print("  🏆 v2.1 improved win rate! Filters working ✅")
-        if stats_v2['pf'] > stats_v1['pf']:
-            print("  🏆 v2.1 improved profit factor! ✅")
-        if stats_v2['max_dd'] < stats_v1['max_dd']:
-            print("  🏆 v2.1 safer drawdown! ✅")
-        if stats_v2['tpw'] < stats_v1['tpw']:
-            print(f"  📉 Trades reduced: {stats_v1['tpw']:.1f} → {stats_v2['tpw']:.1f}/week (quality over quantity)")
-    print("="*55)
 
+    all_results = []
+
+    for months in [6, 3, 1]:
+        print(f"Fetching {months} month data...")
+        df     = fetch_history(months)
+        print(f"✅ Got {len(df):,} candles")
+        trades = run_backtest(df)
+        stats  = print_report(trades, df, months)
+        if stats:
+            all_results.append(stats)
+
+    # ── FINAL SUMMARY TABLE ───────────────────────────
+    print("\n" + "="*55)
+    print("   📋 FINAL SUMMARY — ALL PERIODS")
+    print("="*55)
+    print(f"  {'Period':<10} {'Return':>8} {'Monthly':>8} "
+          f"{'WR':>7} {'PF':>6} {'DD':>6} {'Verdict'}")
+    print(f"  {'─'*53}")
+
+    all_positive = True
+    for r in all_results:
+        flag = '✅' if r['return'] > 0 else '❌'
+        if r['return'] <= 0:
+            all_positive = False
+        print(f"  {flag} {r['months']}mo{'':<6} "
+              f"{r['return']:>+7.1f}% "
+              f"{r['monthly_ret']:>+7.1f}% "
+              f"{r['win_rate']:>6.1f}% "
+              f"{r['pf']:>5.2f} "
+              f"{r['max_dd']:>5.1f}% "
+              f"  {r['verdict'][:25]}")
+
+    print(f"  {'─'*53}")
+
+    if all_positive:
+        print(f"\n  🏆 ALL PERIODS PROFITABLE!")
+        print(f"  ✅ Safe to run live demo")
+        print(f"  ✅ Monthly withdrawal plan viable")
+
+        # Show withdrawal plan
+        if all_results:
+            avg_monthly = sum(r['monthly_ret'] for r in all_results) / len(all_results)
+            print(f"\n  💰 MONTHLY WITHDRAWAL PLAN:")
+            print(f"  Average monthly return: {avg_monthly:+.1f}%")
+            print(f"  {'─'*35}")
+            for capital in [100, 500, 1000, 5000, 10000]:
+                monthly = capital * avg_monthly / 100
+                print(f"  ${capital:>7,} account → ~${monthly:>8.2f}/month")
+    else:
+        print(f"\n  ⚠️  Not all periods profitable")
+        print(f"  Keep optimizing before going live")
+
+    print("="*55)
     mt5.shutdown()
